@@ -10,7 +10,7 @@ from sklearn.linear_model import LinearRegression
 NUM_PROJECTS = 5000
 STRIPE_PERCENT = 0.029
 STRIPE_FIXED = 0.30
-STRIPE_TRANSFER_PERCENT = 0.01
+STRIPE_TRANSFER_PERCENT = 0.03
 STRIPE_TRANSFER_FIXED = 0.50
 PROJECT_TYPES = ["code", "docs", "image", "video"]
 INFRA_COSTS = {
@@ -61,7 +61,9 @@ INFRA_COSTS["video"]["cost_per_gb"] = video_cost_per_gb
 project_data = []
 for _ in range(num_projects):
     project_value = round(np.random.uniform(project_min, project_max), 2)
-    platform_fee = 7 if project_value < 250 else round(project_value * 0.05, 2)
+    platform_fee = (
+        7 if project_value < 250 else round(project_value * 0.1, 2)
+    )  # Ensure 10% everywhere
     stripe_fee = round(project_value * STRIPE_PERCENT + STRIPE_FIXED, 2)
     stripe_transfer_fee = round(
         project_value * STRIPE_TRANSFER_PERCENT + STRIPE_TRANSFER_FIXED, 2
@@ -99,6 +101,12 @@ df["Project Tier"] = df["Project Value"].apply(
     lambda x: "Small" if x < 250 else "Standard"
 )
 df["Margin (%)"] = df["Net Profit"] / df["Platform Fee"] * 100
+
+# Warn if infra cost is zero
+if df["Infra Cost"].sum() == 0:
+    st.warning(
+        "All projects are within the free infrastructure limit. Infra Costs are zero."
+    )
 
 # -------------------- P&L Table --------------------
 pnl = {
@@ -241,10 +249,14 @@ labels = [
     "Infra Costs",
     "Net Profit",
 ]
+# Ensure all wedge sizes are non-negative for the pie chart
+costs_nonneg = [max(0, v) for v in costs]
+if costs[-1] < 0:
+    st.warning("Net Profit is negative. The donut chart will show Net Profit as zero.")
 fig, ax = plt.subplots(figsize=(8, 8), facecolor="#0a0a0a")
 ax.set_facecolor("#0a0a0a")
 wedges, texts, autotexts = ax.pie(
-    costs,
+    costs_nonneg,
     labels=labels,
     colors=[
         modern_colors["success"],
@@ -253,7 +265,7 @@ wedges, texts, autotexts = ax.pie(
         modern_colors["purple"],
         modern_colors["primary"],
     ],
-    autopct="%1.1f%%",
+    autopct=lambda pct: f"({pct:.2f}%)",  # Value and percent stacked
     startangle=90,
     pctdistance=0.85,
     textprops={"color": "white", "fontweight": "bold"},
@@ -637,7 +649,7 @@ This section uses a linear regression to predict platform fee revenue growth bas
 def random_project_type_weights():
     # Generate 4 random numbers, normalize to sum to 1
     weights = np.random.dirichlet(np.ones(len(PROJECT_TYPES)), 1)[0]
-    return {k: w for k, w in zip(PROJECT_TYPES, weights)}
+    return {k: v for k, v in zip(PROJECT_TYPES, weights)}
 
 
 project_type_weights = random_project_type_weights()
@@ -653,7 +665,9 @@ st.info(
 project_data = []
 for _ in range(num_projects):
     project_value = round(np.random.uniform(project_min, project_max), 2)
-    platform_fee = 7 if project_value < 250 else round(project_value * 0.05, 2)
+    platform_fee = (
+        7 if project_value < 250 else round(project_value * 0.1, 2)
+    )  # Ensure 10% everywhere
     stripe_fee = round(project_value * STRIPE_PERCENT + STRIPE_FIXED, 2)
     stripe_transfer_fee = round(
         project_value * STRIPE_TRANSFER_PERCENT + STRIPE_TRANSFER_FIXED, 2
@@ -705,7 +719,9 @@ for n in project_counts:
         )
         type_counts[project_type] += 1
         project_value = round(np.random.uniform(project_min, project_max), 2)
-        platform_fee = 7 if project_value < 250 else round(project_value * 0.05, 2)
+        platform_fee = (
+            7 if project_value < 250 else round(project_value * 0.1, 2)
+        )  # Ensure 10% everywhere
         temp_data.append(platform_fee)
     revenues.append(np.sum(temp_data))
     type_counts_matrix.append([type_counts[k] for k in PROJECT_TYPES])
@@ -737,7 +753,9 @@ sim_infra_costs = []
 sim_net_profits = []
 for _ in range(pred_projects):
     project_value = round(np.random.uniform(project_min, project_max), 2)
-    platform_fee = 7 if project_value < 250 else round(project_value * 0.05, 2)
+    platform_fee = (
+        7 if project_value < 250 else round(project_value * 0.1, 2)
+    )  # Ensure 10% everywhere
     stripe_fee = round(project_value * STRIPE_PERCENT + STRIPE_FIXED, 2)
     stripe_transfer_fee = round(
         project_value * STRIPE_TRANSFER_PERCENT + STRIPE_TRANSFER_FIXED, 2
