@@ -344,7 +344,7 @@ def metrics_grid_board(metrics, columns=6, title=None):
                 col.metric(label=label, value=value, help=helptext)
 
         # Fill any remaining empty columns in the row
-        for col in cols[len(row_metrics):]:
+        for col in cols[len(row_metrics) :]:
             col.write("")
 
 
@@ -1019,5 +1019,5 @@ st.download_button(
     mime="text/csv",
 )
 
-# Replace the footer with a single line of text
-st.markdown("**bl0q Platform Financial Simulator – All rights reserved.**")
+# Replace the footer with a single line of text, centered
+st.markdown("<div style='text-align:center; font-weight:bold;'>bl0q Platform Financial Simulator – All rights reserved.</div>", unsafe_allow_html=True)
