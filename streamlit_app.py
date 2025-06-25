@@ -35,7 +35,7 @@ CONFIG = {
     "PAYROLL_MULTIPLIER": 1.15,
     "DEFAULT_PLATFORM_FEE_PERCENT": 10.0,
     "FEE_THRESHOLD": 1000,
-    "FLAT_FEE": 120,
+    "FLAT_FEE_PERCENT": 12.0,  # Default percent for projects below threshold
     "TRANSFER_FEE_PERCENT": 0.015,
     "TRANSFER_FEE_MAX": 15,
 }
@@ -58,21 +58,21 @@ st.info(
 
 # --- Simulation Assumptions & Limitations ---
 st.info(
-    '''\
+    """\
     **Simulation Assumptions & Limitations**
     - Customer churn is modeled as a monthly decay of the customer base using the selected churn rate.
     - Customer Lifetime Value (LTV) is calculated based on *gross profit* per customer, not just revenue.
     - All forecasts and metrics are based on simulated/projected data, not real historicals.
     - Team cost growth, project values, and customer/project acquisition are simulated with user-defined parameters.
     - This tool is for scenario analysis and planning, not for financial reporting.
-    ''',
-    icon="🔍"
+    """,
+    icon="🔍",
 )
 
 # --- Simulation Warning if No Real Data ---
 st.warning(
     "This simulation uses synthetic data and assumptions. For real-world accuracy, connect your actual business data.",
-    icon="⚠️"
+    icon="⚠️",
 )
 
 # Sidebar Controls
@@ -94,8 +94,12 @@ with st.sidebar.expander("💰 Revenue Model", expanded=True):
     fee_threshold = st.number_input(
         "Fee Threshold ($)", 100, 5000, CONFIG["FEE_THRESHOLD"], 100
     )
-    flat_fee = st.number_input(
-        "Flat Fee (< threshold) ($)", 10, 500, CONFIG["FLAT_FEE"], 1
+    flat_fee_percent = st.slider(
+        "Flat Fee (as % of Project Value, < threshold)",
+        1.0,
+        20.0,
+        float(CONFIG["FLAT_FEE_PERCENT"]),
+        0.1,
     )
     commission_rate = st.slider(
         "Commission Rate (≥ threshold) %",
@@ -172,7 +176,9 @@ with st.sidebar.expander("👥 Team & Operating Costs"):
         st.markdown("**Team Cost Growth Settings**")
         team_grow_enabled = st.toggle("Enable Team Cost Growth", value=True)
         team_grow_percent = st.slider("Team Cost Growth Rate (%)", 0.0, 10.0, 2.0, 0.1)
-        team_grow_period = st.selectbox("Growth Period", ["Monthly", "Quarterly", "Yearly"], index=0)
+        team_grow_period = st.selectbox(
+            "Growth Period", ["Monthly", "Quarterly", "Yearly"], index=0
+        )
 
         monthly_team_cost = (
             dev_count * dev_salary
@@ -187,7 +193,7 @@ with st.sidebar.expander("👥 Team & Operating Costs"):
 
 with st.sidebar.expander("📈 Customer Acquisition"):
     cac_per_customer = st.number_input(
-        "CAC per Customer ($)", 0, 100, CONFIG["CAC_PER_CUSTOMER"]
+        "CAC per Customer ($)", 0, 5000, CONFIG["CAC_PER_CUSTOMER"]
     )
 
 CONFIG["INFRA_COSTS"]["code"] = code_infra
@@ -202,7 +208,7 @@ def simulate_projects(
     min_val,
     max_val,
     fee_threshold,
-    flat_fee,
+    flat_fee_percent,
     commission_rate,
     config,
 ):
@@ -211,7 +217,7 @@ def simulate_projects(
         project_value = round(np.random.uniform(min_val, max_val), 2)
 
         if project_value < fee_threshold:
-            platform_fee = flat_fee
+            platform_fee = round(project_value * (flat_fee_percent / 100), 2)
         else:
             platform_fee = round(project_value * (commission_rate / 100), 2)
 
@@ -251,9 +257,9 @@ def simulate_projects(
             platform_fee
             - stripe_fee
             - stripe_platform_fee
-            - international_fee
             - infra_cost
         )
+
         freelancer_payout = project_value
 
         project_data.append(
@@ -280,13 +286,14 @@ df = simulate_projects(
     project_min,
     project_max,
     fee_threshold,
-    flat_fee,
+    flat_fee_percent,
     commission_rate,
     CONFIG,
 )
 # Calculate number of customers and total CAC
 num_customers = int(np.ceil(num_projects / avg_projects_per_customer))
 total_cac = num_customers * cac_per_customer
+
 
 # --- Churn-based Customer Base Decay ---
 def simulate_customer_base(initial_customers, churn_rate, months):
@@ -295,6 +302,7 @@ def simulate_customer_base(initial_customers, churn_rate, months):
     for _ in range(1, months):
         customers.append(customers[-1] * (1 - churn_rate))
     return np.array(customers)
+
 
 customer_base_12mo = simulate_customer_base(num_customers, churn_rate, 12)
 avg_customer_lifetime_months = 1 / (churn_rate / 100.0) if churn_rate > 0 else 12
@@ -312,7 +320,7 @@ total_stripe_fees = df["Stripe Fee"].sum() + df["Stripe Platform Fee"].sum()
 total_international_fees = df["International Fee"].sum()
 total_infra_costs = df["Infra Cost"].sum()
 gross_profit = (
-    total_revenue - total_stripe_fees - total_international_fees - total_infra_costs
+    total_revenue - total_stripe_fees - total_infra_costs
 )
 
 # --- LTV Calculation: Gross Profit per Customer ---
@@ -326,13 +334,15 @@ net_profit = ebitda
 pnl = {
     "Revenue (Platform Fees)": total_revenue,
     "COGS - Stripe Payment Fees": total_stripe_fees,
-    "COGS - International Fees": total_international_fees,
+    # Removed from COGS: "COGS - International Fees": total_international_fees,
     "COGS - Infrastructure Costs": total_infra_costs,
     "Gross Profit": gross_profit,
     "CAC (Customer Acquisition)": total_cac,
     "Team Salaries (Annual)": annual_team_cost,
     "EBITDA": ebitda,
     "Net Profit": net_profit,
+    # Add client FX fee for transparency
+    "Client FX Fee (not platform cost)": total_international_fees,
     "--- Customer Paid Fees ---": "---",
     "Transfer Fees (Customer Paid)": df["Transfer Fee"].sum(),
 }
@@ -379,6 +389,7 @@ def metrics_grid_board(metrics, columns=6, title=None):
 
         # Fill any remaining empty columns in the row
         for col in cols[len(row_metrics) :]:
+
             col.write("")
 
 
@@ -392,9 +403,9 @@ metrics_data = [
     ),
     (
         "💸 Total COGS",
-        f"${total_stripe_fees + total_international_fees + total_infra_costs:,.0f}",
+        f"${total_stripe_fees + total_infra_costs:,.0f}",
         f"Stripe: ${total_stripe_fees:,.0f}",
-        "Cost of Goods Sold (Stripe fees + International fees + Infrastructure)",
+        "Cost of Goods Sold (Stripe fees + Infrastructure)",
     ),
     (
         "📈 EBITDA",
@@ -428,7 +439,7 @@ metrics_data = [
     ),
     (
         "🧾 COGS/Project",
-        f"${(total_stripe_fees + total_international_fees + total_infra_costs) / num_projects:.2f}",
+        f"${(total_stripe_fees + total_infra_costs) / num_projects:.2f}",
         None,
         "Average COGS per project",
     ),
@@ -629,7 +640,7 @@ for i, (wedge, label, amount) in enumerate(
     ax.text(
         x,
         y,
-        f"{label}\n${amount:,.0f} ({percent:.1f}%)",
+        f"{label}\n${amount:,.1f} ({percent:.2f}%)",
         ha="center",
         va="center",
         fontsize=14,
@@ -1039,14 +1050,27 @@ st.header("🔮 AI Forecast: Revenue, Profit, Customers & More")
 months_hist = np.arange(1, 25)
 # Use random walk + trend for realism
 np.random.seed(42)
-hist_revenue = np.cumsum(np.random.normal(total_revenue/24, total_revenue/60, 24)) + np.linspace(total_revenue*0.5, total_revenue, 24)
-hist_profit = np.cumsum(np.random.normal(net_profit/24, net_profit/60, 24)) + np.linspace(net_profit*0.5, net_profit, 24)
-hist_customers = np.cumsum(np.random.normal(num_customers/24, num_customers/60, 24)) + np.linspace(num_customers*0.5, num_customers, 24)
-hist_projects = np.cumsum(np.random.normal(num_projects/24, num_projects/60, 24)) + np.linspace(num_projects*0.5, num_projects, 24)
-hist_cac = np.cumsum(np.random.normal(total_cac/24, total_cac/60, 24)) + np.linspace(total_cac*0.5, total_cac, 24)
-hist_ebitda = np.cumsum(np.random.normal(ebitda/24, ebitda/60, 24)) + np.linspace(ebitda*0.5, ebitda, 24)
-hist_gross_profit = np.cumsum(np.random.normal(gross_profit/24, gross_profit/60, 24)) + np.linspace(gross_profit*0.5, gross_profit, 24)
-# Simulate team cost growth based on user settings
+hist_revenue = np.cumsum(
+    np.random.normal(total_revenue / 24, abs(total_revenue / 60), 24)
+) + np.linspace(total_revenue * 0.5, total_revenue, 24)
+hist_profit = np.cumsum(
+    np.random.normal(net_profit / 24, abs(net_profit / 60), 24)
+) + np.linspace(net_profit * 0.5, net_profit, 24)
+hist_customers = np.cumsum(
+    np.random.normal(num_customers / 24, abs(num_customers / 60), 24)
+) + np.linspace(num_customers * 0.5, num_customers, 24)
+hist_projects = np.cumsum(
+    np.random.normal(num_projects / 24, abs(num_projects / 60), 24)
+) + np.linspace(num_projects * 0.5, num_projects, 24)
+hist_cac = np.cumsum(
+    np.random.normal(total_cac / 24, abs(total_cac / 60), 24)
+) + np.linspace(total_cac * 0.5, total_cac, 24)
+hist_ebitda = np.cumsum(
+    np.random.normal(ebitda / 24, abs(ebitda / 60), 24)
+) + np.linspace(ebitda * 0.5, ebitda, 24)
+hist_gross_profit = np.cumsum(
+    np.random.normal(gross_profit / 24, abs(gross_profit / 60), 24)
+) + np.linspace(gross_profit * 0.5, gross_profit, 24)
 if team_grow_enabled:
     if team_grow_period == "Monthly":
         period = 1
@@ -1056,26 +1080,43 @@ if team_grow_enabled:
         period = 12
     else:
         period = 1
-    growth_rate_team_cost = (team_grow_percent / 100.0)
-    hist_team_cost = np.array([
-        monthly_team_cost * ((1 + growth_rate_team_cost) ** (i // period)) for i in range(24)
-    ])
+    growth_rate_team_cost = team_grow_percent / 100.0
+    hist_team_cost = np.array(
+        [
+            monthly_team_cost * ((1 + growth_rate_team_cost) ** (i // period))
+            for i in range(24)
+        ]
+    )
 else:
     hist_team_cost = np.full(24, monthly_team_cost)
-hist_ltv = np.cumsum(np.random.normal(ltv/24, ltv/60, 24)) + np.linspace(ltv*0.5, ltv, 24)
-hist_margin = np.cumsum(np.random.normal(df['Margin (%)'].mean()/24, 1, 24)) + np.linspace(df['Margin (%)'].mean()*0.5, df['Margin (%)'].mean(), 24)
-hist_cogs = np.cumsum(np.random.normal((total_stripe_fees+total_international_fees+total_infra_costs)/24, 100, 24)) + np.linspace((total_stripe_fees+total_international_fees+total_infra_costs)*0.5, (total_stripe_fees+total_international_fees+total_infra_costs), 24)
+hist_ltv = np.cumsum(np.random.normal(ltv / 24, abs(ltv / 60), 24)) + np.linspace(
+    ltv * 0.5, ltv, 24
+)
+hist_margin = np.cumsum(
+    np.random.normal(df["Margin (%)"].mean() / 24, 1, 24)
+) + np.linspace(df["Margin (%)"].mean() * 0.5, df["Margin (%)"].mean(), 24)
+hist_cogs = np.cumsum(
+    np.random.normal(
+        (total_stripe_fees + total_infra_costs) / 24, 100, 24
+    )
+) + np.linspace(
+    (total_stripe_fees + total_infra_costs) * 0.5,
+    (total_stripe_fees + total_infra_costs),
+    24,
+)
 
 # Prepare for forecasting next 12 months
 future_months = np.arange(25, 37)
 X = months_hist.reshape(-1, 1)
 X_future = future_months.reshape(-1, 1)
 
+
 # Helper for forecast (use Linear Regression for extrapolation)
 def forecast_linear(y):
     model = LinearRegression()
     model.fit(X, y)
     return model.predict(X_future)
+
 
 # Forecast 10+ metrics with linear regression
 forecasted_revenue = forecast_linear(hist_revenue)
@@ -1091,35 +1132,42 @@ forecasted_margin = forecast_linear(hist_margin)
 forecasted_cogs = forecast_linear(hist_cogs)
 
 # Display forecast table
-forecast_df = pd.DataFrame({
-    'Month': future_months,
-    'Revenue': forecasted_revenue,
-    'Net Profit': forecasted_profit,
-    'Customers': forecasted_customers,
-    'Projects': forecasted_projects,
-    'CAC': forecasted_cac,
-    'EBITDA': forecasted_ebitda,
-    'Gross Profit': forecasted_gross_profit,
-    'Team Cost': forecasted_team_cost,
-    'LTV': forecasted_ltv,
-    'Margin (%)': forecasted_margin,
-    'COGS': forecasted_cogs,
-})
+forecast_df = pd.DataFrame(
+    {
+        "Month": future_months,
+        "Revenue": forecasted_revenue,
+        "Net Profit": forecasted_profit,
+        "Customers": forecasted_customers,
+        "Projects": forecasted_projects,
+        "CAC": forecasted_cac,
+        "EBITDA": forecasted_ebitda,
+        "Gross Profit": forecasted_gross_profit,
+        "Team Cost": forecasted_team_cost,
+        "LTV": forecasted_ltv,
+        "Margin (%)": forecasted_margin,
+        "COGS": forecasted_cogs,
+    }
+)
 
 st.subheader("📊 12-Month AI Forecast Table (Key Metrics)")
-st.dataframe(forecast_df.style.format({
-    'Revenue': '${:,.0f}',
-    'Net Profit': '${:,.0f}',
-    'Customers': '{:,.0f}',
-    'Projects': '{:,.0f}',
-    'CAC': '${:,.0f}',
-    'EBITDA': '${:,.0f}',
-    'Gross Profit': '${:,.0f}',
-    'Team Cost': '${:,.0f}',
-    'LTV': '${:,.0f}',
-    'Margin (%)': '{:.1f}',
-    'COGS': '${:,.0f}',
-}), use_container_width=True)
+st.dataframe(
+    forecast_df.style.format(
+        {
+            "Revenue": "${:,.0f}",
+            "Net Profit": "${:,.0f}",
+            "Customers": "{:,.0f}",
+            "Projects": "{:,.0f}",
+            "CAC": "${:,.0f}",
+            "EBITDA": "${:,.0f}",
+            "Gross Profit": "${:,.0f}",
+            "Team Cost": "${:,.0f}",
+            "LTV": "${:,.0f}",
+            "Margin (%)": "{:.1f}",
+            "COGS": "${:,.0f}",
+        }
+    ),
+    use_container_width=True,
+)
 
 # Plot all forecasts
 st.subheader("📈 Forecasted Metrics (AI)")
@@ -1140,13 +1188,13 @@ metrics = [
 ]
 for ax, (name, y_pred, y_hist) in zip(axs.flat, metrics):
     ax.set_facecolor("#0a0a0a")
-    ax.plot(months_hist, y_hist, 'o-', color="#00D4FF", label="History")
-    ax.plot(future_months, y_pred, 'o--', color="#FFE66D", label="Forecast")
+    ax.plot(months_hist, y_hist, "o-", color="#00D4FF", label="History")
+    ax.plot(future_months, y_pred, "o--", color="#FFE66D", label="Forecast")
     ax.set_title(name, color="white", fontsize=13)
     ax.tick_params(colors="white")
     ax.grid(True, alpha=0.2)
     ax.legend(facecolor="#222", edgecolor="white", labelcolor="white", fontsize=10)
-fig.delaxes(axs[3,2])  # Remove empty subplot
+fig.delaxes(axs[3, 2])  # Remove empty subplot
 plt.tight_layout()
 st.pyplot(fig)
 
@@ -1154,9 +1202,11 @@ st.pyplot(fig)
 
 st.subheader("🤖 AI Analysis & Insights")
 
+
 # Calculate growth rates
 def growth_rate(y):
     return 100 * (y[-1] - y[0]) / abs(y[0]) if y[0] != 0 else 0
+
 
 # Prepare summary metrics for grid
 ai_metrics = [
@@ -1177,7 +1227,16 @@ ai_metrics = [
 cols = st.columns(5)
 for i, (label, value, growth) in enumerate(ai_metrics):
     col = cols[i % 5]
-    if label in ["Revenue", "Net Profit", "CAC", "EBITDA", "Gross Profit", "Team Cost", "LTV", "COGS"]:
+    if label in [
+        "Revenue",
+        "Net Profit",
+        "CAC",
+        "EBITDA",
+        "Gross Profit",
+        "Team Cost",
+        "LTV",
+        "COGS",
+    ]:
         val_fmt = f"${value:,.0f}"
     elif label == "Margin (%)":
         val_fmt = f"{value:.1f}%"
@@ -1185,24 +1244,32 @@ for i, (label, value, growth) in enumerate(ai_metrics):
         val_fmt = f"{value:,.0f}"
     delta_fmt = f"{growth:+.1f}%"
     col.metric(label, val_fmt, delta_fmt)
-    if (i+1) % 5 == 0 and i+1 < len(ai_metrics):
+    if (i + 1) % 5 == 0 and i + 1 < len(ai_metrics):
         cols = st.columns(5)
 
 # Show detailed table below
-ai_table = pd.DataFrame([
-    {
-        "Metric": label,
-        "Forecasted Value": value,
-        "Growth Rate (%)": growth
-    }
-    for label, value, growth in ai_metrics
-])
+ai_table = pd.DataFrame(
+    [
+        {"Metric": label, "Forecasted Value": value, "Growth Rate (%)": growth}
+        for label, value, growth in ai_metrics
+    ]
+)
 
 st.subheader("📋 AI Forecast Summary Table")
-st.dataframe(ai_table.style.format({
-    "Forecasted Value": "${:,.0f}",
-    "Growth Rate (%)": "{:+.1f}%"
-}).apply(lambda x: ["background-color: #FFE66D" if v > 0 else "background-color: #FF6B6B" for v in x] if x.name == 'Growth Rate (%)' else [""]*len(x), axis=1), use_container_width=True)
+st.dataframe(
+    ai_table.style.format(
+        {"Forecasted Value": "${:,.0f}", "Growth Rate (%)": "{:+.1f}%"}
+    ).apply(
+        lambda x: [
+            "background-color: #FFE66D" if v > 0 else "background-color: #FF6B6B"
+            for v in x
+        ]
+        if x.name == "Growth Rate (%)"
+        else [""] * len(x),
+        axis=1,
+    ),
+    use_container_width=True,
+)
 
 # --- Download Section ---
 st.header("📥 Export & Download")
@@ -1228,4 +1295,7 @@ st.download_button(
 )
 
 # Replace the footer with a single line of text, centered
-st.markdown("<div style='text-align:center; font-weight:bold;'>bl0q Platform Financial Simulator – All rights reserved.</div>", unsafe_allow_html=True)
+st.markdown(
+    "<div style='text-align:center; font-weight:bold;'>bl0q Platform Financial Simulator – All rights reserved.</div>",
+    unsafe_allow_html=True,
+)
